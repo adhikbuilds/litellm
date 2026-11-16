@@ -291,7 +291,11 @@ fn models(models: &[Model]) -> Supported {
             return Err(Unsupported::WildcardModel(model_name.clone()));
         }
         unset("model_list.", [("blocked", blocked.is_some())])?;
-        only("model_list.model_info.", model_info, &["id"])?;
+        only(
+            "model_list.model_info.",
+            model_info,
+            &["id", "max_input_tokens"],
+        )?;
         only("model_list.", additional_fields, &[])
     })
 }
@@ -406,6 +410,10 @@ mod tests {
     )]
     #[case::model_id(
         "[{model_name: a, litellm_params: {model: openai/a}, model_info: {id: a-1}}]",
+        Ok(())
+    )]
+    #[case::context_window(
+        "[{model_name: a, litellm_params: {model: openai/a}, model_info: {max_input_tokens: 8000}}]",
         Ok(())
     )]
     #[case::wildcard(
