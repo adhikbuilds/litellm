@@ -55,8 +55,7 @@ async fn serves_only_callers_it_authenticates_and_forwards_the_rest(
         "model_list: []\ngeneral_settings:\n  master_key: gateway-key\n  {setting}\n"
     ))
     .unwrap();
-    let inference = litellm_gateway::build_inference(&config).unwrap();
-    let auth = litellm_gateway_auth::Auth::from_config(&config, inference.secrets.clone());
+    let inference = litellm_gateway::build_inference(&config).await.unwrap();
     let port = free_port().await;
     let settings = Settings {
         upstream: python().await,
@@ -71,7 +70,7 @@ async fn serves_only_callers_it_authenticates_and_forwards_the_rest(
     tokio::spawn(litellm_gateway_forward::run_app(
         settings,
         move |forward| {
-            litellm_gateway::dispatching_router(gateway, &config, &|_| None, auth, forward)
+            litellm_gateway::dispatching_router(Ok(gateway), &config, &|_| None, forward)
         },
         shutdown.clone().cancelled_owned(),
     ));

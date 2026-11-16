@@ -4,6 +4,10 @@
 - Inject shared state and infrastructure. Avoid global runtimes, duplicate client pools, and abstractions for hypothetical endpoint groups
 - Test mounting and server lifecycle through public HTTP behavior. Test endpoint semantics in the owning crate
 
+## Host
+- `src/host/` is the native host, the counterpart of python-bridge's `PythonRouterHost`. `NativeBootHost` answers router-core's deployment build at boot, and `NativeHost` builds a `NativeRouterHost` for each inference call. `Gateway` is gateway-inference's `Gateway<NativeHost>`, so the routes are served through it without depending on it
+- A hostcall answered from the gateway's own state belongs here, not in gateway-inference. Only running the route's attempt and authorizing a name stay with the routes
+
 ## Dispatch in front of Python
 - In forward mode the supervisor's `LITELLM_FORWARD_CONFIG` names the config file Python loads. With it set, the gateway serves its inference routes in front of the Python proxy (`src/dispatch/`), and with it empty it only forwards. Forward mode never reads `LITELLM_CONFIG`, which is the standalone gateway's own setting. MCP is not mounted in front of Python, since a session's requests would split between the two servers
 - axum is the route gate. A path no native route matches goes to `fallback_service(forward)`, a wrong method to `method_not_allowed_fallback`, and nothing else lists the native routes
