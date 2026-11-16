@@ -14,6 +14,8 @@ pub enum Error {
     Expired,
     #[error("operation is not permitted")]
     Forbidden,
+    #[error("the gateway does not authenticate this request")]
+    Unsupported,
     #[error("authentication service unavailable")]
     Unavailable(#[source] Source),
     #[error("gateway authentication unavailable")]
@@ -33,7 +35,9 @@ pub enum Error {
 impl Error {
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidToken | Self::InvalidSession | Self::Expired => StatusCode::UNAUTHORIZED,
+            Self::InvalidToken | Self::InvalidSession | Self::Expired | Self::Unsupported => {
+                StatusCode::UNAUTHORIZED
+            }
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Secret(_)
@@ -47,7 +51,11 @@ impl Error {
 
     pub fn is_denied(&self) -> bool {
         match self {
-            Self::InvalidToken | Self::InvalidSession | Self::Expired | Self::Forbidden => true,
+            Self::InvalidToken
+            | Self::InvalidSession
+            | Self::Expired
+            | Self::Forbidden
+            | Self::Unsupported => true,
             Self::Unavailable(_)
             | Self::Secret(_)
             | Self::Session(_)

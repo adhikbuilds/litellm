@@ -1,7 +1,9 @@
 mod auth;
+mod dispatch;
 mod error;
 mod redis;
 mod secrets;
+pub use dispatch::dispatching_router;
 pub use error::Error;
 pub use redis::RedisClients;
 
