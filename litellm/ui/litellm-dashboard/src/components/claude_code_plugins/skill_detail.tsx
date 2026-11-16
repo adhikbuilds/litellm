@@ -20,13 +20,14 @@ import {
 import type { Plugin, SkillHubSkill } from "./types";
 import SkillVersionHistory from "./SkillVersionHistory";
 import SkillInstallDialog from "./SkillInstallDialog";
+import { userIdentityLabel, type UserIdentityLookup } from "@/app/(dashboard)/hooks/users/useUsers";
 
 type SkillDetailData = Pick<
   SkillHubSkill,
   "id" | "name" | "source" | "version" | "description" | "domain" | "namespace" | "keywords" | "updated_at"
 > &
   Pick<Plugin, "enabled"> &
-  Partial<Pick<Plugin, "created_at" | "category" | "author">> & {
+  Partial<Pick<Plugin, "created_at" | "created_by" | "approved_by" | "category" | "author" | "homepage">> & {
     portable?: boolean;
     downloadAvailable?: boolean;
   };
@@ -34,17 +35,9 @@ type SkillDetailData = Pick<
 export const legacySkillDetail = (skill: Plugin): SkillDetailData => skill;
 
 export const skillHubDetail = (skill: SkillHubSkill): SkillDetailData => ({
-  id: skill.id,
-  name: skill.name,
-  source: skill.source,
-  version: skill.version,
-  description: skill.description,
-  domain: skill.domain,
-  namespace: skill.namespace,
-  keywords: skill.keywords,
-  updated_at: skill.updated_at,
+  ...skill,
   enabled: skill.visibility === "public",
-  portable: true,
+  portable: Boolean(skill.content_url),
   downloadAvailable: Boolean(skill.download_url),
 });
 
@@ -117,6 +110,7 @@ const SkillSource: React.FC<
 };
 
 interface SkillDetailProps {
+  users?: UserIdentityLookup;
   skill: SkillDetailData;
   onBack: () => void;
   isAdmin?: boolean;
@@ -127,6 +121,7 @@ interface SkillDetailProps {
 }
 
 const SkillDetail: React.FC<SkillDetailProps> = ({
+  users = {},
   skill,
   onBack,
   accessToken,
@@ -165,6 +160,8 @@ const SkillDetail: React.FC<SkillDetailProps> = ({
     typeof window !== "undefined" ? window.location.origin : "<proxy-url>",
     marketplaceRequiresKey,
   );
+  const creator = skill.created_by ? users[skill.created_by] : undefined;
+  const author = skill.author ?? (creator ? { name: creator.user_alias, email: creator.user_email } : undefined);
 
   const detailRows = [
     ...(skill.category
@@ -177,9 +174,17 @@ const SkillDetail: React.FC<SkillDetailProps> = ({
     ...(skill.version
       ? [{ property: t("claudeCodePlugins.skillDetail.properties.version"), value: skill.version }]
       : []),
-    ...(skill.author?.name
-      ? [{ property: t("claudeCodePlugins.skillDetail.properties.author"), value: skill.author.name }]
+    ...(author?.name ? [{ property: t("claudeCodePlugins.skillDetail.properties.author"), value: author.name }] : []),
+    ...(author?.email
+      ? [{ property: t("claudeCodePlugins.skillDetail.properties.authorEmail"), value: author.email }]
       : []),
+    ...(accessToken && skill.created_by
+      ? [{ property: t("skills.table.columns.createdBy"), value: userIdentityLabel(skill.created_by, users) }]
+      : []),
+    ...(accessToken && skill.approved_by
+      ? [{ property: t("skills.table.columns.approvedBy"), value: userIdentityLabel(skill.approved_by, users) }]
+      : []),
+    ...(skill.homepage ? [{ property: t("skills.submissions.fields.homepage"), value: skill.homepage }] : []),
     ...(skill.created_at
       ? [
           {

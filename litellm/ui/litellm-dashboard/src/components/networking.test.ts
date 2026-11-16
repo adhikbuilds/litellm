@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { clearTokenCookies } from "@/utils/cookieUtils";
+import type { SkillSubmission } from "@/components/claude_code_plugins/types";
 import * as Networking from "./networking";
 import { uiHref } from "@/utils/uiHref";
 
@@ -1243,6 +1244,53 @@ describe("uploadClaudeCodeSkill", () => {
     expect(headers.get("Authorization")).toBe("Bearer upload-token");
     expect(headers.has("Content-Type")).toBe(false);
     expect(Object.fromEntries(init?.body as FormData)).toEqual({ file, metadata: JSON.stringify(metadata) });
+  });
+});
+
+describe("uploadSkillSubmission", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    { version: undefined, fields: {} },
+    { version: "", fields: { version: "" } },
+    { version: " 4.0.0 ", fields: { version: "4.0.0" } },
+  ])("preserves the pending version intent for $version", async ({ version, fields }) => {
+    const submission: SkillSubmission = {
+      id: "submission-1",
+      revision: 3,
+      can_edit: true,
+      skill_name: "shared-skill",
+      operation: "update",
+      status: "pending_review",
+      proposal: {
+        name: "shared-skill",
+        description: "Proposed instructions",
+        source: { source: "github", repo: "example/skills" },
+        version: "3.0.0",
+      },
+      has_archive: true,
+      submitted_by: "member@example.org",
+      created_at: "2026-10-21T00:00:00Z",
+      base_skill_id: "published-skill",
+      base_updated_at: null,
+      reviewed_by: null,
+      reviewed_at: null,
+      rejection_reason: null,
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(submission));
+    vi.stubGlobal("fetch", fetch);
+    const file = new File(["replacement"], "skill.zip", { type: "application/zip" });
+
+    await Networking.uploadSkillSubmission("upload-token", submission, file, version);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe(`${Networking.getProxyBaseUrl()}/skill-hub/submissions/${submission.id}/upload`);
+    expect(init?.method).toBe("PUT");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer upload-token");
+    expect(headers.has("Content-Type")).toBe(false);
+    expect(Object.fromEntries(init?.body as FormData)).toEqual({ file, expected_revision: "3", ...fields });
   });
 });
 

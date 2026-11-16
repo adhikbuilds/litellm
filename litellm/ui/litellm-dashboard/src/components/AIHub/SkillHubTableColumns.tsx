@@ -1,6 +1,7 @@
 "use client";
 
 import { getSkillMetadataColumns } from "@/components/claude_code_plugins/SkillMetadataColumns";
+import type { UserIdentityLookup } from "@/app/(dashboard)/hooks/users/useUsers";
 
 import { ColumnDef } from "@tanstack/react-table";
 import { Copy, ExternalLink, Info, MoreHorizontal } from "lucide-react";
@@ -70,10 +71,11 @@ function SkillHubRowActions({ skill, onSkillClick }: SkillHubRowActionsProps) {
 }
 
 interface SkillHubTableColumnsDeps {
+  users?: UserIdentityLookup;
   onSkillClick: (skill: Plugin) => void;
 }
 
-export const getSkillHubTableColumns = ({ onSkillClick }: SkillHubTableColumnsDeps): ColumnDef<Plugin>[] => [
+export const getSkillHubTableColumns = ({ onSkillClick, users }: SkillHubTableColumnsDeps): ColumnDef<Plugin>[] => [
   {
     id: "name",
     accessorKey: "name",
@@ -161,7 +163,7 @@ export const getSkillHubTableColumns = ({ onSkillClick }: SkillHubTableColumnsDe
       />
     ),
   },
-  ...getSkillMetadataColumns<Plugin>(),
+  ...getSkillMetadataColumns<Plugin>(users),
   {
     id: "actions",
     meta: { className: "text-right", headerClassName: "text-right" },

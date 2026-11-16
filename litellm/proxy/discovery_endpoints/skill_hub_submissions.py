@@ -1,5 +1,4 @@
-import asyncio
-from dataclasses import replace
+import hashlib
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -17,12 +16,13 @@ from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.anthropic_endpoints.claude_code_endpoints.claude_code_skill_access import resolve_skill_visibility
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.proxy.deps.repositories import PluginUploadRepositoryDep, SkillSubmissionRepositoryDep
-from litellm.proxy.discovery_endpoints.agent_skills_archive import build_agent_skill_archive
 from litellm.proxy.discovery_endpoints.skill_hub_endpoints import (
-    prepare_skill_publication,
+    prepare_skill_replacement,
+    skill_archive_payload,
     skill_metadata_response,
     skill_proposal_response,
     skill_publication_response,
+    updated_skill_manifest,
 )
 from litellm.proxy.discovery_endpoints.skill_hub_mutations import (
     SkillMutationError,
@@ -36,7 +36,6 @@ from litellm.proxy.discovery_endpoints.skill_hub_mutations import (
 from litellm.proxy.discovery_endpoints.skill_import import MAX_IMPORT_BYTES
 from litellm.repositories.plugin_publication import resolve_plugin_version
 from litellm.types.proxy.skill_hub import (
-    SkillHubMetadata,
     SkillHubRejection,
     SkillHubReviewResponse,
     SkillHubSubmission,
@@ -134,28 +133,24 @@ async def download_submission(
     submissions: SkillSubmissionRepositoryDep,
     caller: Annotated[UserAPIKeyAuth, Depends(user_api_key_auth)],
 ) -> Response:
-    """Download an owned proposal as a private portable ZIP. Legacy nonportable archives return 404."""
+    """Download an owned proposal as a private ZIP, preserving legacy packages without portable frontmatter."""
     owner: Final = _owner(caller)
     store: Final = _store(submissions)
     submission: Final = await store.get(submission_id, owner)
     if submission is None:
         raise HTTPException(404, "Skill submission not found")
     content: Final = await store.get_archive(submission_id, owner)
-    archive: Final = (
-        await asyncio.to_thread(build_agent_skill_archive, content, plugin_name=submission.plugin_name)
-        if content is not None
-        else None
-    )
-    if archive is None:
-        raise HTTPException(404, "This submission has no portable Agent Skills archive")
+    if content is None:
+        raise HTTPException(404, "This submission has no stored archive")
+    payload: Final = await skill_archive_payload(content, submission.plugin_name)
     return Response(
-        archive.content,
+        payload,
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{submission.plugin_name}.zip"',
             "Cache-Control": "private, no-store",
             "X-Content-Type-Options": "nosniff",
-            "ETag": f'"{archive.digest}"',
+            "ETag": f'"sha256:{hashlib.sha256(payload).hexdigest()}"',
         },
     )
 
@@ -253,9 +248,10 @@ async def _editable(
     store: SkillSubmissionStore,
     revision: int,
     version: str | None,
+    version_supplied: bool,
     uploads: PluginUploadStore | None,
     caller: UserAPIKeyAuth,
-) -> SkillSubmission:
+) -> tuple[SkillSubmission, str | None]:
     submission: Final = await store.get(submission_id, owner)
     if submission is None:
         raise HTTPException(404, "Skill submission not found")
@@ -266,13 +262,14 @@ async def _editable(
     )
     if isinstance(existing, SkillMutationError):
         raise HTTPException(existing.status, existing.message)
+    target_version: Final = version if version_supplied else submission.proposal.version
     validation: Final = resolve_plugin_version(
-        version, None if existing is None else existing.version, updating=existing is not None
+        target_version, None if existing is None else existing.version, updating=existing is not None
     )
     if isinstance(validation, PluginPublicationError):
         error: Final = publication_error(validation)
         raise HTTPException(error.status, error.message)
-    return submission
+    return submission, target_version
 
 
 @router.put("/{submission_id}", response_model=SkillHubSubmission)
@@ -284,24 +281,24 @@ async def edit_submission(
     uploads: PluginUploadRepositoryDep,
     caller: Annotated[UserAPIKeyAuth, Depends(user_api_key_auth)],
 ) -> SkillHubSubmission:
-    """Replace a pending proposal's metadata, preserving files. Only its original submitting user may edit."""
+    """Update supplied proposal metadata, preserving omitted fields and files. Only the original submitter may edit."""
     owner: Final = _editor(caller)
     store: Final = _store(submissions)
-    submission: Final = await _editable(
-        submission_id, owner, store, body.expected_revision, body.version, uploads, caller
+    submission, target_version = await _editable(
+        submission_id,
+        owner,
+        store,
+        body.expected_revision,
+        body.version,
+        "version" in body.model_fields_set,
+        uploads,
+        caller,
     )
     publication: Final = PluginPublication(
         name=submission.plugin_name,
-        version=body.version,
-        description=body.description,
-        manifest={
-            **{
-                key: value
-                for key, value in submission.proposal.manifest.items()
-                if key not in SkillHubMetadata.model_fields
-            },
-            **body.model_dump(exclude={"expected_revision"}, exclude_none=True),
-        },
+        version=target_version,
+        description=body.description if "description" in body.model_fields_set else submission.proposal.description,
+        manifest=updated_skill_manifest(request, submission.plugin_name, submission.proposal.manifest, body),
         created_by=owner,
     )
     result: Final = await store.edit(submission_id, owner, body.expected_revision, publication)
@@ -315,22 +312,24 @@ async def edit_submission_archive(
     submissions: SkillSubmissionRepositoryDep,
     uploads: PluginUploadRepositoryDep,
     caller: Annotated[UserAPIKeyAuth, Depends(archive_writer)],
-    file: Annotated[UploadFile, File(description="Replacement Agent Skills ZIP with the same declared skill name")],
+    file: Annotated[UploadFile, File(description="Replacement ZIP retaining the registered and declared skill names")],
     expected_revision: Annotated[int, Form(ge=0)],
-    version: Annotated[str | None, Form()] = None,
+    version: Annotated[
+        str | None,
+        Form(description="Omit to preserve the proposal's target version, or send empty for automatic versioning"),
+    ] = None,
 ) -> SkillHubSubmission:
     """Replace a pending proposal's files using the upload limits. Only its original submitting user may edit."""
     owner: Final = _editor(caller)
     store: Final = _store(submissions)
-    submission: Final = await _editable(submission_id, owner, store, expected_revision, version, uploads, caller)
+    version_supplied: Final = "version" in await request.form()
+    submission, target_version = await _editable(
+        submission_id, owner, store, expected_revision, version, version_supplied, uploads, caller
+    )
     content: Final = await file.read(MAX_IMPORT_BYTES + 1)
     if len(content) > MAX_IMPORT_BYTES:
         raise HTTPException(413, "Skill ZIP must be 10 MiB or smaller")
-    archive: Final = await asyncio.to_thread(build_agent_skill_archive, content)
-    if archive is None or archive.declared_name != submission.plugin_name:
-        raise HTTPException(422, "Replacement SKILL.md must declare the existing skill name and a description")
-    prepared: Final = await prepare_skill_publication(request, archive, version, None, owner)
-    publication: Final = replace(prepared, manifest={**submission.proposal.manifest, **prepared.manifest})
+    publication: Final = await prepare_skill_replacement(request, content, submission.proposal, target_version, owner)
     result: Final = await store.edit(submission_id, owner, expected_revision, publication)
     return _response(request, _changed(result), caller)
 
