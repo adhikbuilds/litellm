@@ -234,7 +234,18 @@ fn router(settings: &RouterSettings) -> Supported {
         optional_pre_call_checks: _,
         additional_fields,
     } = settings;
-    only("router_settings.", additional_fields, &[])
+    only(
+        "router_settings.",
+        additional_fields,
+        &[
+            "redis_url",
+            "redis_host",
+            "redis_port",
+            "redis_password",
+            "redis_db",
+            "cache_kwargs",
+        ],
+    )
 }
 
 fn litellm(settings: &LiteLlmSettings) -> Supported {
@@ -365,6 +376,7 @@ mod tests {
     #[case::no_callbacks("litellm_settings: {callbacks: []}")]
     #[case::variables("environment_variables: {OPENAI_API_KEY: sk-provider}")]
     #[case::router_core_setting("router_settings: {fallbacks: [{a: [b]}], num_retries: 2}")]
+    #[case::router_redis("router_settings: {redis_host: localhost, redis_port: 6379}")]
     fn serves_sections_on_the_allowlist(#[case] section: &str) {
         assert_eq!(supported(&with_section(section), &no_env), Ok(()));
     }
@@ -391,8 +403,8 @@ mod tests {
         "litellm_settings.max_budget"
     )]
     #[case::unknown_router_setting(
-        "router_settings: {redis_host: localhost}",
-        "router_settings.redis_host"
+        "router_settings: {provider_budget_config: {}}",
+        "router_settings.provider_budget_config"
     )]
     #[case::unknown_section("some_future_section: {enabled: true}", "some_future_section")]
     fn forwards_a_section_off_the_allowlist(#[case] section: &str, #[case] name: &str) {

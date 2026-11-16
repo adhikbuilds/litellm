@@ -17,7 +17,6 @@ use litellm_gateway_auth_core::{
     plan::{self, Plan},
 };
 use litellm_gateway_forward::Forward;
-use litellm_router_core::ConfigError;
 
 #[derive(Clone)]
 struct Gate {
@@ -93,7 +92,7 @@ async fn gate(
 /// configuration, the route and the request are all ones it is known to handle the way Python
 /// does, and Python serves the rest through `forward`.
 pub fn dispatching_router(
-    inference: Result<Arc<Gateway>, ConfigError>,
+    inference: Result<Arc<Gateway>, crate::Error>,
     config: &Config,
     env: &dyn Fn(&str) -> Option<String>,
     forward: Forward,
@@ -107,10 +106,10 @@ pub fn dispatching_router(
     }
     let inference = match inference {
         Ok(inference) => inference,
-        Err(refused) => {
+        Err(unserved) => {
             tracing::info!(
-                reason = %litellm_error::Report::new(&refused),
-                "router-core can't route this configuration without python, so python serves every request"
+                reason = %litellm_error::Report::new(&unserved),
+                "the gateway can't serve this configuration natively, so python serves every request"
             );
             return Router::new().fallback_service(forward);
         }
